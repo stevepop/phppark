@@ -13,6 +13,7 @@ import (
 	"github.com/stevepop/phppark/internal/dns"
 	"github.com/stevepop/phppark/internal/nginx"
 	"github.com/stevepop/phppark/internal/php"
+	"github.com/stevepop/phppark/internal/services"
 	"github.com/stevepop/phppark/internal/ssl"
 )
 
@@ -59,46 +60,63 @@ func installCmd() *cobra.Command {
 }
 
 func runInstall() error {
-	fmt.Println("🚀 Installing PHPark...")
-
-	// Get paths
 	paths, err := config.GetPaths()
 	if err != nil {
-		return fmt.Errorf("failed to get paths: %w", err)
+		return err
 	}
 
 	// Check if already installed
 	if paths.Exists() {
-		fmt.Printf("⚠️  PHPark is already installed at %s\n", paths.Home)
-		fmt.Println("To reinstall, remove the directory first:")
-		fmt.Printf("  rm -rf %s\n", paths.Home)
+		fmt.Println("✅ PHPark is already installed!")
+		fmt.Printf("\nConfiguration directory: %s\n", paths.Home)
 		return nil
 	}
 
-	// Create directories
-	fmt.Printf("📁 Creating directories at %s...\n", paths.Home)
+	fmt.Println("🚀 Installing PHPark...\n")
+
+	// Create directory structure
 	if err := paths.EnsureDirectories(); err != nil {
 		return fmt.Errorf("failed to create directories: %w", err)
 	}
 
-	// Save default configuration
-	fmt.Println("📝 Creating default configuration...")
-	cfg := config.DefaultConfig()
-	if err := config.SaveConfig(cfg); err != nil {
+	// Create default config
+	defaultConfig := config.DefaultConfig()
+	if err := config.SaveConfig(defaultConfig); err != nil {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	// Create empty site registry
-	fmt.Println("📋 Creating empty site registry...")
-	registry := config.NewSiteRegistry()
-	if err := config.SaveSites(registry); err != nil {
+	// Create empty sites registry
+	emptySites := &config.SiteRegistry{Sites: []config.Site{}}
+	if err := config.SaveSites(emptySites); err != nil {
 		return fmt.Errorf("failed to save sites: %w", err)
 	}
 
-	fmt.Println("\n✅ PHPark installed successfully!")
+	fmt.Println("✅ PHPark installed successfully!")
 	fmt.Printf("\nConfiguration directory: %s\n", paths.Home)
 	fmt.Printf("Config file: %s\n", paths.Config)
 	fmt.Printf("Sites file: %s\n", paths.Sites)
+
+	// On Linux, try to start services
+	if runtime.GOOS == "linux" {
+		fmt.Println("\n🔧 Starting services...")
+
+		if err := services.StartNginx(); err != nil {
+			fmt.Printf("⚠️  Warning: Could not start nginx: %v\n", err)
+			fmt.Println("   You may need to install nginx: sudo apt install nginx")
+		} else {
+			fmt.Println("✅ Nginx started")
+		}
+
+		// Try to start PHP-FPM services
+		phpVersions, _ := php.DetectPHPVersions()
+		if len(phpVersions) > 0 {
+			for _, v := range phpVersions {
+				if err := services.StartPHPFPM(v.Version); err == nil {
+					fmt.Printf("✅ PHP %s-FPM started\n", v.Version)
+				}
+			}
+		}
+	}
 
 	fmt.Println("\n📚 Next steps:")
 	fmt.Println("  1. Review/edit config: cat ~/.phppark/config.yaml")
@@ -347,60 +365,56 @@ func unlinkCmd() *cobra.Command {
 	}
 }
 
-func runUnlink(name string) error {
+func runUnlink(siteName string) error {
 	// Load sites
 	sites, err := config.LoadSites()
 	if err != nil {
 		return fmt.Errorf("failed to load sites: %w", err)
 	}
 
-	// Check if site exists
-	site := sites.FindSite(name)
+	// Find site
+	site := sites.FindSite(siteName)
 	if site == nil {
-		fmt.Printf("❌ Site '%s' not found\n", name)
-		fmt.Println("\nRegistered sites:")
-
-		allSites := sites.ListSites()
-		if len(allSites) == 0 {
-			fmt.Println("  (none)")
-		} else {
-			for _, s := range allSites {
-				fmt.Printf("  - %s\n", s.Name)
-			}
-		}
-
-		return nil
+		return fmt.Errorf("site '%s' not found", siteName)
 	}
 
-	// Load config for domain
+	// Get config
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
-	// Show what we're removing
-	fmt.Printf("🗑️  Removing site: %s.%s\n", name, cfg.Domain)
+	// Display info
+	fmt.Printf("🗑️  Removing site: %s.%s\n", siteName, cfg.Domain)
 	fmt.Printf("   Path: %s\n", site.Path)
 	fmt.Printf("   Type: %s\n", site.Type)
 
-	// Remove from registry
-	removed := sites.RemoveSite(name)
-	if !removed {
-		return fmt.Errorf("failed to remove site from registry")
+	// Get paths
+	paths, err := config.GetPaths()
+	if err != nil {
+		return err
 	}
 
-	// Save registry
+	// Remove nginx config file
+	configPath := filepath.Join(paths.Nginx, siteName+".conf")
+	if err := os.Remove(configPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to remove config: %w", err)
+	}
+	fmt.Println("   🗑️  Removed nginx config")
+
+	// Remove from nginx on Linux
+	if runtime.GOOS == "linux" {
+		if err := services.RemoveNginxConfig(siteName); err != nil {
+			fmt.Printf("   ⚠️  Warning: Could not remove from nginx: %v\n", err)
+		} else {
+			fmt.Println("   ✅ Removed from nginx")
+		}
+	}
+
+	// Remove from registry
+	sites.RemoveSite(siteName)
 	if err := config.SaveSites(sites); err != nil {
 		return fmt.Errorf("failed to save sites: %w", err)
-	}
-
-	// Remove nginx config
-	paths, err := config.GetPaths()
-	if err == nil {
-		configPath := filepath.Join(paths.Nginx, name+".conf")
-		if err := os.Remove(configPath); err == nil {
-			fmt.Printf("   🗑️  Removed nginx config\n")
-		}
 	}
 
 	fmt.Println("\n✅ Site unlinked successfully")
@@ -474,34 +488,74 @@ func runLinks() error {
 }
 
 func generateNginxConfig(site *config.Site, cfg *config.Config) error {
-	// Get paths
 	paths, err := config.GetPaths()
 	if err != nil {
 		return err
 	}
 
-	// Create nginx site config
+	// Determine PHP version
+	phpVersion := site.PHPVersion
+	if phpVersion == "" {
+		phpVersion = cfg.DefaultPHP
+	}
+
+	// Create site config
 	nginxCfg := nginx.CreateSiteConfig(
-		site.Name,
-		site.Path,
-		cfg.Domain,
-		site.PHPVersion,
-		site.Secured,
+		site.Name,    // siteName
+		site.Path,    // sitePath
+		cfg.Domain,   // domain
+		phpVersion,   // phpVersion
+		site.Secured, // useSSL
 	)
+
+	// If secured, add certificate paths
+	if site.Secured {
+		nginxCfg.CertPath = filepath.Join(paths.Certificates, site.Name+".crt")
+		nginxCfg.KeyPath = filepath.Join(paths.Certificates, site.Name+".key")
+	}
 
 	// Generate config content
 	configContent, err := nginx.GenerateConfig(nginxCfg)
 	if err != nil {
-		return fmt.Errorf("failed to generate nginx config: %w", err)
+		return fmt.Errorf("failed to generate config: %w", err)
 	}
 
-	// Write to PHPark's nginx directory
+	// Write to file
 	configPath := filepath.Join(paths.Nginx, site.Name+".conf")
-	if err := nginx.WriteConfigFile(configPath, configContent); err != nil {
-		return fmt.Errorf("failed to write nginx config: %w", err)
+	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+		return fmt.Errorf("failed to write config: %w", err)
 	}
 
 	fmt.Printf("   📄 Config: %s\n", configPath)
+
+	// Only deploy on Linux (skip macOS development)
+	if runtime.GOOS == "linux" {
+		// Fix permissions first
+		if err := services.FixSitePermissions(site.Path); err != nil {
+			fmt.Printf("   ⚠️  Warning: Could not fix permissions: %v\n", err)
+		}
+
+		// Deploy to nginx
+		if err := services.DeployNginxConfig(site.Name, configPath); err != nil {
+			fmt.Printf("   ⚠️  Warning: Could not deploy to nginx: %v\n", err)
+			fmt.Println("   Run manually: sudo cp ~/.phppark/nginx/*.conf /etc/nginx/sites-available/")
+		} else {
+			fmt.Printf("   ✅ Deployed to nginx\n")
+		}
+
+		// Start PHP-FPM
+		if phpVersion != "" {
+			if err := services.StartPHPFPM(phpVersion); err != nil {
+				fmt.Printf("   ⚠️  Warning: Could not start PHP-FPM: %v\n", err)
+			}
+		}
+
+		// Ensure nginx is running
+		if err := services.StartNginx(); err != nil {
+			fmt.Printf("   ⚠️  Warning: Could not start nginx: %v\n", err)
+		}
+	}
+
 	return nil
 }
 
