@@ -35,4 +35,6 @@ bin/
 
 # Config files (local development)
 .env
-*.local.yaml
+*.local.yaml# Test files
+test-*
+*-test
