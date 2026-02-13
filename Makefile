@@ -12,8 +12,11 @@ all: build
 # Build for current platform
 build: $(GO_FILES)
 	@echo "Building $(BINARY_NAME)..."
-	go build -ldflags="-X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/phppark
-
+	go build -ldflags="-linkmode=external -X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/phppark
+	@if [ "$$(uname)" = "Darwin" ]; then \
+		echo "Code signing for macOS..."; \
+		codesign -s - $(BUILD_DIR)/$(BINARY_NAME); \
+	fi
 # Build for Linux
 build-linux:
 	@echo "Building for Linux..."
@@ -22,7 +25,9 @@ build-linux:
 # Build for Mac (for development)
 build-mac:
 	@echo "Building for macOS..."
-	GOOS=darwin GOARCH=amd64 go build -ldflags="-X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME)-mac ./cmd/phppark
+	GOOS=darwin GOARCH=arm64 go build -ldflags="-linkmode=external -X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME)-mac ./cmd/phppark
+	@echo "Code signing..."
+	codesign -s - $(BUILD_DIR)/$(BINARY_NAME)-mac
 
 # Build for all platforms
 build-all: build-linux build-mac
