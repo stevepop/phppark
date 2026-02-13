@@ -1,6 +1,5 @@
 # Binaries
 /phppark
-phppark-linux
 dist/
 *.exe
 *.dll
