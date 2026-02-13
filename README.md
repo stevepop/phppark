@@ -53,13 +53,13 @@ phppark restart              # Restart all services
 ## Development Status
 
 - [x] Project initialization
-- [ ] CLI framework setup
-- [ ] Nginx configuration management
-- [ ] PHP version detection and management
-- [ ] DNS configuration (dnsmasq)
-- [ ] SSL certificate generation
-- [ ] Site linking and parking
-- [ ] Service management
+- [x] CLI framework setup
+- [x] Nginx configuration management
+- [x] PHP version detection and management
+- [x] DNS configuration (dnsmasq)
+- [x] SSL certificate generation
+- [x] Site linking and parking
+- [ ] Service management (nginx reload/restart)
 
 ## Contributing
 
