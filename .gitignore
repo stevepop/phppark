@@ -1,5 +1,5 @@
 # Binaries
-phppark
+/phppark
 dist/
 *.exe
 *.dll
@@ -38,3 +38,8 @@ bin/
 *.local.yaml# Test files
 test-*
 *-test
+
+# Docker test files
+Dockerfile.test
+docker-test.sh
+dist/phppark-linux
