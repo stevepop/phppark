@@ -87,15 +87,16 @@ func checkLinuxDNS(domain string) (bool, error) {
 
 // === systemd-resolved stub listener management ===
 
-// CheckSystemdResolvedConflict returns true if systemd-resolved is active and
-// will conflict with dnsmasq on port 53.
+// CheckSystemdResolvedConflict returns true if systemd-resolved's stub listener
+// is active and will conflict with dnsmasq on port 53.
+// Detection is based on /etc/resolv.conf being a symlink to a systemd path,
+// which is the definitive indicator that the stub is in control of port 53.
 func CheckSystemdResolvedConflict() bool {
-	cmd := exec.Command("systemctl", "is-active", "systemd-resolved")
-	output, err := cmd.Output()
+	target, err := os.Readlink("/etc/resolv.conf")
 	if err != nil {
-		return false
+		return false // not a symlink — stub not in control
 	}
-	return strings.TrimSpace(string(output)) == "active"
+	return strings.Contains(target, "systemd")
 }
 
 // IsSystemdResolvedStubDisabled returns true if PHPark has previously disabled
@@ -145,6 +146,9 @@ func DisableSystemdResolvedStub() error {
 		target, _ := os.Readlink("/etc/resolv.conf")
 		if strings.Contains(target, "systemd") {
 			content := "# Managed by PHPark\nnameserver 127.0.0.1\n"
+			// Remove the symlink first — tee follows symlinks, so without this
+			// it would write into the stub file instead of creating a plain file.
+			exec.Command("sudo", "rm", "-f", "/etc/resolv.conf").Run()
 			cmd = exec.Command("sudo", "tee", "/etc/resolv.conf")
 			cmd.Stdin = strings.NewReader(content)
 			cmd.Stdout = io.Discard
@@ -219,9 +223,19 @@ func setDNSStubListener(value string) error {
 		content = strings.Join(filtered, "\n")
 	} else {
 		newSetting := fmt.Sprintf("DNSStubListener=%s", value)
+		// Check for an existing uncommented DNSStubListener= line.
+		// strings.Contains alone would match commented-out defaults like
+		// "#DNSStubListener=yes", causing the replace loop to silently no-op.
+		hasUncommented := false
+		for _, line := range strings.Split(content, "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "DNSStubListener=") {
+				hasUncommented = true
+				break
+			}
+		}
 		switch {
-		case strings.Contains(content, "DNSStubListener="):
-			// Replace the existing setting
+		case hasUncommented:
+			// Replace the existing uncommented setting
 			lines := strings.Split(content, "\n")
 			for i, line := range lines {
 				if strings.HasPrefix(strings.TrimSpace(line), "DNSStubListener=") {

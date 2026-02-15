@@ -164,6 +164,10 @@ func setupCmd() *cobra.Command {
 }
 
 func runSetup() error {
+	if os.Getuid() != 0 {
+		return fmt.Errorf("setup must be run as root: use 'sudo phppark setup'")
+	}
+
 	fmt.Println("🚀 PHPark Complete Setup")
 	fmt.Println("=" + strings.Repeat("=", 50))
 	fmt.Println("\nThis will install:")
@@ -1295,31 +1299,31 @@ func runTrust() error {
 		return fmt.Errorf("failed to check DNS: %w", err)
 	}
 
-	if isConfigured {
-		fmt.Printf("✅ DNS resolver is configured for .%s\n", cfg.Domain)
-		fmt.Println("\nTesting resolution...")
-	} else {
-		// Check for systemd-resolved stub listener conflict before attempting dnsmasq setup.
-		// We only disable the stub — systemd-resolved keeps running for VPN/DHCP/NetworkManager.
-		if dns.CheckSystemdResolvedConflict() {
-			fmt.Println("\n⚠️  systemd-resolved stub listener is occupying port 53")
-			fmt.Println("   This is common on Ubuntu/Debian systems (including EC2 instances).")
-			fmt.Println("   PHPark can disable the stub listener only — systemd-resolved will keep")
-			fmt.Println("   running, so VPN routing, DHCP DNS, and NetworkManager continue to work.")
-			fmt.Printf("   Disable stub listener now? (Y/n): ")
-			var ans string
-			fmt.Scanln(&ans)
-			if ans == "" || ans == "y" || ans == "Y" || ans == "yes" {
-				if err := dns.DisableSystemdResolvedStub(); err != nil {
-					fmt.Printf("   ⚠️  Warning: %v\n", err)
-					fmt.Println("   To fix manually, add DNSStubListener=no to /etc/systemd/resolved.conf")
-					fmt.Println("   then run: sudo systemctl restart systemd-resolved")
-				} else {
-					fmt.Println("   ✅ Stub listener disabled — systemd-resolved still running for VPN/DHCP DNS\n")
-				}
+	// Check for systemd-resolved stub listener conflict regardless of whether
+	// the dnsmasq config file already exists. A previous failed run may have
+	// written the config without ever freeing port 53.
+	if dns.CheckSystemdResolvedConflict() {
+		fmt.Println("\n⚠️  systemd-resolved stub listener is occupying port 53")
+		fmt.Println("   This is common on Ubuntu/Debian systems (including EC2 instances).")
+		fmt.Println("   PHPark can disable the stub listener only — systemd-resolved will keep")
+		fmt.Println("   running, so VPN routing, DHCP DNS, and NetworkManager continue to work.")
+		fmt.Printf("   Disable stub listener now? (Y/n): ")
+		var ans string
+		fmt.Scanln(&ans)
+		if ans == "" || ans == "y" || ans == "Y" || ans == "yes" {
+			if err := dns.DisableSystemdResolvedStub(); err != nil {
+				fmt.Printf("   ⚠️  Warning: %v\n", err)
+				fmt.Println("   To fix manually, add DNSStubListener=no to /etc/systemd/resolved.conf")
+				fmt.Println("   then run: sudo systemctl restart systemd-resolved")
+			} else {
+				fmt.Println("   ✅ Stub listener disabled — systemd-resolved still running for VPN/DHCP DNS\n")
 			}
 		}
+	}
 
+	if isConfigured {
+		fmt.Printf("✅ DNS resolver is configured for .%s\n", cfg.Domain)
+	} else {
 		fmt.Println("Setting up dnsmasq...")
 		fmt.Println("⚠️  This requires sudo access")
 
@@ -1329,6 +1333,16 @@ func runTrust() error {
 
 		fmt.Printf("\n✅ DNS configured for .%s domains\n", cfg.Domain)
 	}
+
+	// Always ensure dnsmasq is running — the config file may exist from a
+	// previous partial run where the service never successfully started.
+	if err := exec.Command("sudo", "systemctl", "restart", "dnsmasq").Run(); err != nil {
+		fmt.Printf("⚠️  Warning: could not restart dnsmasq: %v\n", err)
+	} else {
+		fmt.Println("✅ dnsmasq running")
+	}
+
+	fmt.Println("\nTesting resolution...")
 
 	// Test resolution
 	fmt.Println("\n=== Testing DNS Resolution ===")
