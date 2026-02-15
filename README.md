@@ -99,27 +99,31 @@ phppark setup                # Complete system setup (recommended)
 # 1. One-time setup (on fresh Ubuntu)
 sudo phppark setup
 
-# 2. Create your first app
+# 2. Set up DNS so .test domains resolve
+sudo phppark trust
+
+# 3. Create your first app
 mkdir -p ~/sites/blog/public
 echo '<?php phpinfo();' > ~/sites/blog/public/index.php
 
-# 3. Park the sites directory
+# 4. Park the sites directory
 cd ~/sites
 sudo phppark park
 
-# 4. Your site is ready at blog.test!
+# 5. Your site is ready at blog.test!
+curl http://blog.test
 
-# 5. Need a different PHP version?
+# 6. Need a different PHP version?
 sudo phppark use 8.3         # Switches globally (CLI + sites)
 sudo phppark rebuild         # Apply to existing sites
 
-# 6. Create another app with specific PHP version
+# 7. Create another app with specific PHP version
 mkdir -p ~/sites/api/public
 cd ~/sites/api
 sudo phppark link api
 sudo phppark use 8.2 api     # This site uses PHP 8.2
 
-# 7. Add HTTPS
+# 8. Add HTTPS
 sudo phppark secure blog
 
 # Your sites:
