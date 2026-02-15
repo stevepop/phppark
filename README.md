@@ -48,8 +48,11 @@ echo '<?php phpinfo();' > ~/sites/myapp/public/index.php
 cd ~/sites
 sudo phppark park
 
+# Set up DNS so .test domains resolve
+sudo phppark trust
+
 # Done! Your site is running at myapp.test
-curl -H "Host: myapp.test" http://localhost
+curl http://myapp.test
 ```
 
 ## Commands
@@ -75,7 +78,7 @@ phppark php:list             # List available PHP versions
 ### SSL
 ```bash
 phppark secure [site]        # Add HTTPS to site
-phpmark unsecure [site]      # Remove HTTPS from site
+phppark unsecure [site]      # Remove HTTPS from site
 ```
 
 ### DNS
