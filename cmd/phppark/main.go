@@ -97,52 +97,49 @@ func runInstall() error {
 	fmt.Printf("Config file: %s\n", paths.Config)
 	fmt.Printf("Sites file: %s\n", paths.Sites)
 
-	// On Linux, check for dependencies
-	if runtime.GOOS == "linux" {
-		fmt.Println("\n🔧 Checking system requirements...")
+	fmt.Println("\n🔧 Checking system requirements...")
 
-		missingDeps := []string{}
+	missingDeps := []string{}
 
-		// Check for nginx
-		if _, err := exec.LookPath("nginx"); err != nil {
-			missingDeps = append(missingDeps, "nginx")
+	// Check for nginx
+	if _, err := exec.LookPath("nginx"); err != nil {
+		missingDeps = append(missingDeps, "nginx")
+	}
+
+	// Check for dnsmasq
+	if _, err := exec.LookPath("dnsmasq"); err != nil {
+		missingDeps = append(missingDeps, "dnsmasq")
+	}
+
+	// Check for PHP
+	phpVersions, err := php.DetectPHPVersions()
+	if err != nil || len(phpVersions) == 0 {
+		missingDeps = append(missingDeps, "PHP-FPM")
+	}
+
+	if len(missingDeps) > 0 {
+		fmt.Println("\n⚠️  Missing dependencies detected:")
+		for _, dep := range missingDeps {
+			fmt.Printf("   - %s\n", dep)
 		}
+		fmt.Println("\n💡 Quick install: Run 'sudo phppark setup' to install everything")
+		fmt.Println("   Or install manually: sudo apt install nginx dnsmasq php8.2-fpm")
+		return nil
+	}
 
-		// Check for dnsmasq
-		if _, err := exec.LookPath("dnsmasq"); err != nil {
-			missingDeps = append(missingDeps, "dnsmasq")
-		}
+	// Start services if all dependencies present
+	fmt.Println("\n🔧 Starting services...")
 
-		// Check for PHP
-		phpVersions, err := php.DetectPHPVersions()
-		if err != nil || len(phpVersions) == 0 {
-			missingDeps = append(missingDeps, "PHP-FPM")
-		}
+	if err := services.StartNginx(); err != nil {
+		fmt.Printf("⚠️  Warning: Could not start nginx: %v\n", err)
+	} else {
+		fmt.Println("✅ Nginx started")
+	}
 
-		if len(missingDeps) > 0 {
-			fmt.Println("\n⚠️  Missing dependencies detected:")
-			for _, dep := range missingDeps {
-				fmt.Printf("   - %s\n", dep)
-			}
-			fmt.Println("\n💡 Quick install: Run 'sudo phppark setup' to install everything")
-			fmt.Println("   Or install manually: sudo apt install nginx dnsmasq php8.2-fpm")
-			return nil
-		}
-
-		// Start services if all dependencies present
-		fmt.Println("\n🔧 Starting services...")
-
-		if err := services.StartNginx(); err != nil {
-			fmt.Printf("⚠️  Warning: Could not start nginx: %v\n", err)
-		} else {
-			fmt.Println("✅ Nginx started")
-		}
-
-		if len(phpVersions) > 0 {
-			for _, v := range phpVersions {
-				if err := services.StartPHPFPM(v.Version); err == nil {
-					fmt.Printf("✅ PHP %s-FPM started\n", v.Version)
-				}
+	if len(phpVersions) > 0 {
+		for _, v := range phpVersions {
+			if err := services.StartPHPFPM(v.Version); err == nil {
+				fmt.Printf("✅ PHP %s-FPM started\n", v.Version)
 			}
 		}
 	}
@@ -167,13 +164,6 @@ func setupCmd() *cobra.Command {
 }
 
 func runSetup() error {
-	if runtime.GOOS != "linux" {
-		fmt.Println("❌ Setup command only available on Linux")
-		fmt.Println("   On macOS, install dependencies with Homebrew:")
-		fmt.Println("   brew install nginx dnsmasq php@8.2")
-		return fmt.Errorf("unsupported platform")
-	}
-
 	fmt.Println("🚀 PHPark Complete Setup")
 	fmt.Println("=" + strings.Repeat("=", 50))
 	fmt.Println("\nThis will install:")
@@ -213,6 +203,21 @@ func runSetup() error {
 		return fmt.Errorf("failed to install dnsmasq: %w", err)
 	}
 	fmt.Println("✅ dnsmasq installed")
+
+	// Disable systemd-resolved's stub listener if it is occupying port 53.
+	// We only disable the stub — systemd-resolved keeps running so that VPN,
+	// DHCP, and NetworkManager DNS routing continue to work normally.
+	if dns.CheckSystemdResolvedConflict() {
+		fmt.Println("\n⚠️  systemd-resolved stub listener is occupying port 53")
+		fmt.Println("   Disabling stub listener (systemd-resolved will keep running)...")
+		if err := dns.DisableSystemdResolvedStub(); err != nil {
+			fmt.Printf("   ⚠️  Warning: could not fix automatically: %v\n", err)
+			fmt.Println("   To fix manually, add DNSStubListener=no to /etc/systemd/resolved.conf")
+			fmt.Println("   then run: sudo systemctl restart systemd-resolved")
+		} else {
+			fmt.Println("   ✅ Stub listener disabled — systemd-resolved still running for VPN/DHCP DNS")
+		}
+	}
 
 	// Install software-properties-common (for add-apt-repository)
 	fmt.Println("\n📦 Installing prerequisites...")
@@ -564,13 +569,10 @@ func runUnlink(siteName string) error {
 	}
 	fmt.Println("   🗑️  Removed nginx config")
 
-	// Remove from nginx on Linux
-	if runtime.GOOS == "linux" {
-		if err := services.RemoveNginxConfig(siteName); err != nil {
-			fmt.Printf("   ⚠️  Warning: Could not remove from nginx: %v\n", err)
-		} else {
-			fmt.Println("   ✅ Removed from nginx")
-		}
+	if err := services.RemoveNginxConfig(siteName); err != nil {
+		fmt.Printf("   ⚠️  Warning: Could not remove from nginx: %v\n", err)
+	} else {
+		fmt.Println("   ✅ Removed from nginx")
 	}
 
 	// Remove from registry
@@ -690,32 +692,29 @@ func generateNginxConfig(site *config.Site, cfg *config.Config) error {
 
 	fmt.Printf("   📄 Config: %s\n", configPath)
 
-	// Only deploy on Linux (skip macOS development)
-	if runtime.GOOS == "linux" {
-		// Fix permissions first
-		if err := services.FixSitePermissions(site.Path); err != nil {
-			fmt.Printf("   ⚠️  Warning: Could not fix permissions: %v\n", err)
-		}
+	// Fix permissions first
+	if err := services.FixSitePermissions(site.Path); err != nil {
+		fmt.Printf("   ⚠️  Warning: Could not fix permissions: %v\n", err)
+	}
 
-		// Deploy to nginx
-		if err := services.DeployNginxConfig(site.Name, configPath); err != nil {
-			fmt.Printf("   ⚠️  Warning: Could not deploy to nginx: %v\n", err)
-			fmt.Println("   Run manually: sudo cp ~/.phppark/nginx/*.conf /etc/nginx/sites-available/")
-		} else {
-			fmt.Printf("   ✅ Deployed to nginx\n")
-		}
+	// Deploy to nginx
+	if err := services.DeployNginxConfig(site.Name, configPath); err != nil {
+		fmt.Printf("   ⚠️  Warning: Could not deploy to nginx: %v\n", err)
+		fmt.Println("   Run manually: sudo cp ~/.phppark/nginx/*.conf /etc/nginx/sites-available/")
+	} else {
+		fmt.Printf("   ✅ Deployed to nginx\n")
+	}
 
-		// Start PHP-FPM
-		if phpVersion != "" {
-			if err := services.StartPHPFPM(phpVersion); err != nil {
-				fmt.Printf("   ⚠️  Warning: Could not start PHP-FPM: %v\n", err)
-			}
+	// Start PHP-FPM
+	if phpVersion != "" {
+		if err := services.StartPHPFPM(phpVersion); err != nil {
+			fmt.Printf("   ⚠️  Warning: Could not start PHP-FPM: %v\n", err)
 		}
+	}
 
-		// Ensure nginx is running
-		if err := services.StartNginx(); err != nil {
-			fmt.Printf("   ⚠️  Warning: Could not start nginx: %v\n", err)
-		}
+	// Ensure nginx is running
+	if err := services.StartNginx(); err != nil {
+		fmt.Printf("   ⚠️  Warning: Could not start nginx: %v\n", err)
 	}
 
 	return nil
@@ -1020,37 +1019,30 @@ func runUse(phpVersion, siteName string) error {
 			fmt.Println()
 		}
 
-		// Offer to install (only on Linux)
-		if runtime.GOOS == "linux" {
-			shouldInstall, err := php.PromptInstallPHP(phpVersion)
+		shouldInstall, err := php.PromptInstallPHP(phpVersion)
+		if err != nil {
+			return err
+		}
+
+		if shouldInstall {
+			if err := php.InstallPHP(phpVersion); err != nil {
+				return fmt.Errorf("installation failed: %w", err)
+			}
+
+			// Re-detect versions
+			versions, err = php.DetectPHPVersions()
 			if err != nil {
-				return err
+				return fmt.Errorf("failed to detect PHP versions: %w", err)
 			}
 
-			if shouldInstall {
-				if err := php.InstallPHP(phpVersion); err != nil {
-					return fmt.Errorf("installation failed: %w", err)
-				}
-
-				// Re-detect versions
-				versions, err = php.DetectPHPVersions()
-				if err != nil {
-					return fmt.Errorf("failed to detect PHP versions: %w", err)
-				}
-
-				// Verify installation
-				if !php.ValidatePHPVersion(phpVersion, versions) {
-					return fmt.Errorf("installation completed but PHP %s not detected", phpVersion)
-				}
-
-				fmt.Printf("\n✅ PHP %s is now available!\n\n", phpVersion)
-			} else {
-				return fmt.Errorf("PHP %s is required but not installed", phpVersion)
+			// Verify installation
+			if !php.ValidatePHPVersion(phpVersion, versions) {
+				return fmt.Errorf("installation completed but PHP %s not detected", phpVersion)
 			}
+
+			fmt.Printf("\n✅ PHP %s is now available!\n\n", phpVersion)
 		} else {
-			fmt.Println("On macOS, install with Homebrew:")
-			fmt.Printf("  brew install php@%s\n", phpVersion)
-			return fmt.Errorf("PHP %s not available", phpVersion)
+			return fmt.Errorf("PHP %s is required but not installed", phpVersion)
 		}
 	}
 
@@ -1069,25 +1061,20 @@ func runUse(phpVersion, siteName string) error {
 
 		fmt.Printf("✅ Set default PHP version to %s\n", phpVersion)
 
-		// Switch CLI version on Linux (like Herd does)
-		if runtime.GOOS == "linux" {
-			phpPath := fmt.Sprintf("/usr/bin/php%s", phpVersion)
-			cmd := exec.Command("update-alternatives", "--set", "php", phpPath)
-			if err := cmd.Run(); err != nil {
-				fmt.Printf("\n⚠️  Warning: Could not update CLI PHP: %v\n", err)
-				fmt.Printf("   Sites will use PHP %s via PHP-FPM\n", phpVersion)
-				fmt.Printf("   To manually switch CLI: sudo update-alternatives --set php %s\n", phpPath)
-			} else {
-				fmt.Printf("   ✅ CLI PHP switched to %s\n", phpVersion)
-			}
+		// Switch CLI PHP version
+		phpPath := fmt.Sprintf("/usr/bin/php%s", phpVersion)
+		cmd := exec.Command("update-alternatives", "--set", "php", phpPath)
+		if err := cmd.Run(); err != nil {
+			fmt.Printf("\n⚠️  Warning: Could not update CLI PHP: %v\n", err)
+			fmt.Printf("   Sites will use PHP %s via PHP-FPM\n", phpVersion)
+			fmt.Printf("   To manually switch CLI: sudo update-alternatives --set php %s\n", phpPath)
+		} else {
+			fmt.Printf("   ✅ CLI PHP switched to %s\n", phpVersion)
 		}
 
 		fmt.Println("\nNew sites will use PHP", phpVersion)
 		fmt.Println("To update existing sites, run: sudo phppark rebuild")
-
-		if runtime.GOOS == "linux" {
-			fmt.Println("\n💡 Verify CLI change: php -v")
-		}
+		fmt.Println("\n💡 Verify CLI change: php -v")
 
 		return nil
 	}
@@ -1310,42 +1297,37 @@ func runTrust() error {
 
 	if isConfigured {
 		fmt.Printf("✅ DNS resolver is configured for .%s\n", cfg.Domain)
-
-		// Add Mac-specific warning
-		if runtime.GOOS == "darwin" {
-			fmt.Println("\n⚠️  macOS Note: DNS resolution requires dnsmasq")
-			fmt.Println("   The resolver file exists, but needs a DNS server.")
-			fmt.Println("\n   To complete setup:")
-			fmt.Println("   1. Install dnsmasq: brew install dnsmasq")
-			fmt.Println("   2. Configure: echo 'address=/.test/127.0.0.1' >> $(brew --prefix)/etc/dnsmasq.conf")
-			fmt.Println("   3. Start service: sudo brew services start dnsmasq")
-			fmt.Println("\n   Or wait for Linux deployment (works automatically)")
-		}
-
 		fmt.Println("\nTesting resolution...")
 	} else {
-		// Setup DNS
-		if runtime.GOOS == "darwin" {
-			fmt.Println("Setting up macOS resolver...")
-			fmt.Println("⚠️  This requires sudo access")
-		} else {
-			fmt.Println("Setting up dnsmasq...")
-			fmt.Println("⚠️  This requires sudo access")
+		// Check for systemd-resolved stub listener conflict before attempting dnsmasq setup.
+		// We only disable the stub — systemd-resolved keeps running for VPN/DHCP/NetworkManager.
+		if dns.CheckSystemdResolvedConflict() {
+			fmt.Println("\n⚠️  systemd-resolved stub listener is occupying port 53")
+			fmt.Println("   This is common on Ubuntu/Debian systems (including EC2 instances).")
+			fmt.Println("   PHPark can disable the stub listener only — systemd-resolved will keep")
+			fmt.Println("   running, so VPN routing, DHCP DNS, and NetworkManager continue to work.")
+			fmt.Printf("   Disable stub listener now? (Y/n): ")
+			var ans string
+			fmt.Scanln(&ans)
+			if ans == "" || ans == "y" || ans == "Y" || ans == "yes" {
+				if err := dns.DisableSystemdResolvedStub(); err != nil {
+					fmt.Printf("   ⚠️  Warning: %v\n", err)
+					fmt.Println("   To fix manually, add DNSStubListener=no to /etc/systemd/resolved.conf")
+					fmt.Println("   then run: sudo systemctl restart systemd-resolved")
+				} else {
+					fmt.Println("   ✅ Stub listener disabled — systemd-resolved still running for VPN/DHCP DNS\n")
+				}
+			}
 		}
+
+		fmt.Println("Setting up dnsmasq...")
+		fmt.Println("⚠️  This requires sudo access")
 
 		if err := dns.SetupDNS(cfg.Domain); err != nil {
 			return fmt.Errorf("failed to setup DNS: %w", err)
 		}
 
 		fmt.Printf("\n✅ DNS configured for .%s domains\n", cfg.Domain)
-
-		// Add Mac warning for new setup too
-		if runtime.GOOS == "darwin" {
-			fmt.Println("\n⚠️  macOS Note: DNS resolution requires dnsmasq")
-			fmt.Println("   See instructions above to complete setup")
-			fmt.Println("   Install: brew install dnsmasq")
-			fmt.Println("   This feature works automatically on Linux")
-		}
 	}
 
 	// Test resolution

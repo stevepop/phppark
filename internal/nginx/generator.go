@@ -5,22 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"text/template"
 )
 
 // GetPHPSocket returns the PHP-FPM socket path for a given PHP version
 func GetPHPSocket(phpVersion string) string {
-	// On Linux
-	if runtime.GOOS == "linux" {
-		if phpVersion == "" {
-			phpVersion = "8.2" // Default
-		}
-		return fmt.Sprintf("/var/run/php/php%s-fpm.sock", phpVersion)
+	if phpVersion == "" {
+		phpVersion = "8.2" // Default
 	}
-
-	// On macOS (for development/testing)
-	return fmt.Sprintf("/tmp/php%s-fpm.sock", phpVersion)
+	return fmt.Sprintf("/var/run/php/php%s-fpm.sock", phpVersion)
 }
 
 // GetDocumentRoot determines the document root for a site
@@ -78,12 +71,7 @@ func CreateSiteConfig(siteName, sitePath, domain, phpVersion string, useSSL bool
 	}
 
 	if useSSL {
-		// SSL cert paths (will be created by SSL generation later)
 		certDir := fmt.Sprintf("/home/%s/.phppark/certificates", os.Getenv("USER"))
-		if runtime.GOOS == "darwin" {
-			certDir = fmt.Sprintf("/Users/%s/.phppark/certificates", os.Getenv("USER"))
-		}
-
 		cfg.CertPath = filepath.Join(certDir, fmt.Sprintf("%s.crt", siteName))
 		cfg.KeyPath = filepath.Join(certDir, fmt.Sprintf("%s.key", siteName))
 	}

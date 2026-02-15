@@ -1,4 +1,4 @@
-.PHONY: build install clean test build-linux build-mac run help
+.PHONY: build install clean test build-linux run help
 
 # Variables
 BINARY_NAME=phppark
@@ -12,26 +12,12 @@ all: build
 # Build for current platform
 build: $(GO_FILES)
 	@echo "Building $(BINARY_NAME)..."
-	go build -ldflags="-linkmode=external -X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/phppark
-	@if [ "$$(uname)" = "Darwin" ]; then \
-		echo "Code signing for macOS..."; \
-		codesign -s - --force $(BUILD_DIR)/$(BINARY_NAME); \
-	fi
+	go build -ldflags="-X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/phppark
 
 # Build for Linux
 build-linux:
 	@echo "Building for Linux..."
 	GOOS=linux GOARCH=amd64 go build -ldflags="-X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux ./cmd/phppark
-
-# Build for Mac (for development)
-build-mac:
-	@echo "Building for macOS..."
-	GOOS=darwin GOARCH=arm64 go build -ldflags="-linkmode=external -X main.version=$(VERSION)" -o $(BUILD_DIR)/$(BINARY_NAME)-mac ./cmd/phppark
-	@echo "Code signing..."
-	codesign -s - $(BUILD_DIR)/$(BINARY_NAME)-mac
-
-# Build for all platforms
-build-all: build-linux build-mac
 
 # Install dependencies
 deps:
@@ -65,9 +51,7 @@ help:
 	@echo ""
 	@echo "Usage:"
 	@echo "  make build        Build for current platform"
-	@echo "  make build-linux  Build for Linux"
-	@echo "  make build-mac    Build for macOS"
-	@echo "  make build-all    Build for all platforms"
+	@echo "  make build-linux  Build for Linux (amd64)"
 	@echo "  make deps         Install dependencies"
 	@echo "  make test         Run tests"
 	@echo "  make run          Build and run"

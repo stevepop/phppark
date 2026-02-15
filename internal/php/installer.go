@@ -3,15 +3,10 @@ package php
 import (
 	"fmt"
 	"os/exec"
-	"runtime"
 )
 
 // InstallPHP installs a PHP version with FPM
 func InstallPHP(version string) error {
-	if runtime.GOOS != "linux" {
-		return fmt.Errorf("automatic PHP installation only supported on Linux")
-	}
-
 	fmt.Printf("📥 Installing PHP %s-FPM...\n", version)
 
 	// Ensure ondrej PPA is added (for Ubuntu/Debian)
@@ -59,13 +54,6 @@ func InstallPHP(version string) error {
 
 // PromptInstallPHP asks user if they want to install a PHP version
 func PromptInstallPHP(version string) (bool, error) {
-	if runtime.GOOS != "linux" {
-		fmt.Printf("\n⚠️  PHP %s is not installed.\n", version)
-		fmt.Println("   On macOS, install with Homebrew:")
-		fmt.Printf("   brew install php@%s\n", version)
-		return false, fmt.Errorf("PHP %s not available", version)
-	}
-
 	fmt.Printf("\n⚠️  PHP %s is not installed.\n", version)
 	fmt.Printf("   Would you like to install it now? (y/N): ")
 
